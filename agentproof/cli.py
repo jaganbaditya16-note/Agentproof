@@ -8,6 +8,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from agentproof.core import detect_changes
+
 app = typer.Typer(
     name="agentproof",
     help="Independent verification engine for AI agent work.",
@@ -25,6 +27,8 @@ def run_git(args: list[str]) -> tuple[int, str, str]:
             cwd=Path.cwd(),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         return (
@@ -77,15 +81,15 @@ def repo():
         )
         raise typer.Exit(code=1)
 
-    branch_code, branch, branch_error = run_git(
+    branch_code, branch, _ = run_git(
         ["branch", "--show-current"]
     )
 
-    commit_code, commit, commit_error = run_git(
+    commit_code, commit, _ = run_git(
         ["rev-parse", "HEAD"]
     )
 
-    status_code, status_output, status_error = run_git(
+    status_code, status_output, _ = run_git(
         ["status", "--porcelain"]
     )
 
@@ -190,7 +194,7 @@ def baseline():
         )
         raise typer.Exit(code=1)
 
-    branch_code, branch, branch_error = run_git(
+    branch_code, branch, _ = run_git(
         ["branch", "--show-current"]
     )
 
@@ -223,6 +227,55 @@ def baseline():
             title="AgentProof Baseline",
             border_style="green",
         )
+    )
+
+
+@app.command()
+def changes():
+    """Show changes made after the AgentProof baseline."""
+
+    try:
+        detected = detect_changes(Path.cwd())
+
+    except Exception as exc:
+        console.print(
+            Panel(
+                f"[bold red]{exc}[/bold red]",
+                title="Change Detection Error",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(code=1)
+
+    if not detected:
+        console.print(
+            Panel(
+                "[bold green]No changes detected.[/bold green]",
+                title="AgentProof Changes",
+                border_style="green",
+            )
+        )
+        return
+
+    table = Table(title="Changes Since Baseline")
+
+    table.add_column("Status")
+    table.add_column("Path")
+
+    for change in detected:
+        status = change["status"]
+
+        if status == "RENAMED":
+            path = f'{change["old_path"]} -> {change["path"]}'
+        else:
+            path = change["path"]
+
+        table.add_row(status, path)
+
+    console.print(table)
+
+    console.print(
+        f"\n[bold]Total changes detected:[/bold] {len(detected)}"
     )
 
 
