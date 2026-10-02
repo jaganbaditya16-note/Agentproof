@@ -1,0 +1,5 @@
+﻿.venv/
+agentproof.egg-info/
+__pycache__/
+*.pyc
+.agentproof/
