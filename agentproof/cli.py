@@ -1,4 +1,6 @@
-﻿import subprocess
+﻿import json
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -25,7 +27,11 @@ def run_git(args: list[str]) -> tuple[int, str, str]:
             text=True,
         )
 
-        return result.returncode, result.stdout.strip(), result.stderr.strip()
+        return (
+            result.returncode,
+            result.stdout.strip(),
+            result.stderr.strip(),
+        )
 
     except FileNotFoundError:
         return -1, "", "Git is not installed or not available in PATH."
@@ -63,8 +69,8 @@ def repo():
     if root_code != 0:
         console.print(
             Panel(
-                f"[bold red]Not a Git repository.[/bold red]\n\n"
-                f"{root_error or 'Run git init to create one.'}",
+                "[bold red]Not a Git repository.[/bold red]\n\n"
+                + (root_error or "Git repository not found."),
                 title="Repository Check",
                 border_style="red",
             )
@@ -109,18 +115,116 @@ def repo():
     console.print(table)
 
     if changed_files:
-        console.print(
-            "\n[yellow]Working tree changes:[/yellow]"
-        )
+        console.print("\n[yellow]Working tree changes:[/yellow]")
 
         for file in changed_files:
-            console.print(f"  • {file}")
+            console.print(f"  {file}")
     else:
+        console.print("\n[green]Working tree is clean.[/green]")
+
+
+@app.command()
+def baseline():
+    """Capture the repository state before agent work begins."""
+
+    root_code, root, root_error = run_git(
+        ["rev-parse", "--show-toplevel"]
+    )
+
+    if root_code != 0:
         console.print(
-            "\n[green]Working tree is clean.[/green]"
+            Panel(
+                "[bold red]Not a Git repository.[/bold red]\n\n"
+                + (root_error or "Git repository not found."),
+                title="Baseline",
+                border_style="red",
+            )
         )
+        raise typer.Exit(code=1)
+
+    status_code, status_output, status_error = run_git(
+        ["status", "--porcelain"]
+    )
+
+    if status_code != 0:
+        console.print(
+            Panel(
+                "[bold red]Could not read Git status.[/bold red]\n\n"
+                + (status_error or "Unknown Git error."),
+                title="Baseline",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(code=1)
+
+    if status_output:
+        console.print(
+            Panel(
+                "[bold red]Baseline cannot be captured.[/bold red]\n\n"
+                "The working tree is not clean.\n\n"
+                "Commit or remove the existing changes first.",
+                title="Baseline",
+                border_style="red",
+            )
+        )
+
+        console.print("\nExisting changes:")
+
+        for line in status_output.splitlines():
+            console.print(f"  {line}")
+
+        raise typer.Exit(code=1)
+
+    commit_code, commit, commit_error = run_git(
+        ["rev-parse", "HEAD"]
+    )
+
+    if commit_code != 0:
+        console.print(
+            Panel(
+                "[bold red]No Git commit exists yet.[/bold red]\n\n"
+                + (commit_error or "Create the first commit first."),
+                title="Baseline",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(code=1)
+
+    branch_code, branch, branch_error = run_git(
+        ["branch", "--show-current"]
+    )
+
+    if branch_code != 0:
+        branch = "Unknown"
+
+    evidence_dir = Path(root) / ".agentproof"
+    evidence_dir.mkdir(exist_ok=True)
+
+    baseline_data = {
+        "agentproof_version": "0.1.0",
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "repository_root": root,
+        "branch": branch,
+        "commit": commit,
+        "working_tree_clean": True,
+    }
+
+    baseline_path = evidence_dir / "baseline.json"
+
+    with baseline_path.open("w", encoding="utf-8") as file:
+        json.dump(baseline_data, file, indent=2)
+
+    console.print(
+        Panel(
+            "[bold green]Baseline captured successfully.[/bold green]\n\n"
+            f"Branch: {branch}\n"
+            f"Commit: {commit}\n"
+            f"Evidence: {baseline_path}",
+            title="AgentProof Baseline",
+            border_style="green",
+        )
+    )
 
 
 if __name__ == "__main__":
     app()
-
