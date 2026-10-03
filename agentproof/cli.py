@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agentproof.core import detect_changes, verify as run_verification
+from agentproof.run_manager import RunManager
 
 
 app = typer.Typer(
@@ -287,9 +288,19 @@ def verify():
     """Run the complete AgentProof verification pipeline."""
 
     repo = Path.cwd()
+    run_manager = RunManager(repo)
+
+    run = run_manager.start()
+    run_id = run["run_id"]
+
+    console.print(
+        f"\n[dim]Verification run: {run_id}[/dim]\n"
+    )
 
     try:
         report = run_verification(repo)
+
+        report["run"] = run
 
     except Exception as exc:
         console.print(
@@ -299,7 +310,11 @@ def verify():
                 border_style="red",
             )
         )
+        run_manager.finish()
         raise typer.Exit(code=1)
+
+    finally:
+        run_manager.finish()
 
     report_path = (
         repo / ".agentproof" / "report.json"
