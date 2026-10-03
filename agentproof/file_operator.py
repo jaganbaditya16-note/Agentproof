@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from agentproof.action_log import ActionLogger
+from agentproof.run_manager import RunManager
 
 
 class FileOperator:
@@ -11,7 +12,11 @@ class FileOperator:
 
     def __init__(self, repo: Path):
         self.repo = repo
-        self.logger = ActionLogger(repo)
+
+        run = RunManager(repo).current()
+        run_id = run['run_id'] if run else None
+
+        self.logger = ActionLogger(repo, run_id=run_id)
 
     def read_text(self, relative_path: str) -> str:
         """Read a text file and record the operation."""
@@ -66,3 +71,6 @@ class FileOperator:
                 "path": relative_path,
             },
         )
+
+
+
