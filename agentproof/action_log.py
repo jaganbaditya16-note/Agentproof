@@ -9,8 +9,13 @@ from typing import Any
 class ActionLogger:
     """Write structured AgentProof action events."""
 
-    def __init__(self, repo: Path):
+    def __init__(
+        self,
+        repo: Path,
+        run_id: str | None = None,
+    ):
         self.repo = repo
+        self.run_id = run_id
         self.log_path = repo / ".agentproof" / "actions.jsonl"
 
         self.log_path.parent.mkdir(
@@ -27,6 +32,7 @@ class ActionLogger:
 
         event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "run_id": self.run_id,
             "action_type": action_type,
             "details": details or {},
         }
