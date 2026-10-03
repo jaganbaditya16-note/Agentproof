@@ -349,6 +349,10 @@ def evaluate_evidence(repo: Path) -> dict[str, Any]:
 
     try:
         import importlib
+        import sys
+
+        if str(repo) not in sys.path:
+            sys.path.insert(0, str(repo))
 
         module = importlib.import_module(module_name)
     except Exception as exc:
@@ -491,4 +495,5 @@ def verify(repo: Path) -> dict[str, Any]:
         "evidence": evidence,
         "verdict": verdict,
     }
+
 
