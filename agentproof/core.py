@@ -491,3 +491,4 @@ def verify(repo: Path) -> dict[str, Any]:
         "evidence": evidence,
         "verdict": verdict,
     }
+
