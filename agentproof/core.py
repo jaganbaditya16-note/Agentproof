@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from agentproof.command_runner import CommandRunner
+
 
 def run_git(repo: Path, args: list[str]) -> tuple[int, str, str]:
     """Run a Git command and return exit code, stdout, stderr."""
@@ -301,43 +303,16 @@ def run_tests(repo: Path) -> dict[str, Any]:
             "stderr": "No test command configured.",
         }
 
-    try:
-        result = subprocess.run(
-            command,
-            cwd=repo,
-            shell=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=120,
-        )
+    runner = CommandRunner(repo)
+    result = runner.run(command, timeout=120)
 
-        return {
-            "status": "PASS" if result.returncode == 0 else "FAIL",
-            "command": command,
-            "exit_code": result.returncode,
-            "stdout": result.stdout[-10000:],
-            "stderr": result.stderr[-10000:],
-        }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "status": "UNKNOWN",
-            "command": command,
-            "exit_code": -1,
-            "stdout": "",
-            "stderr": "Test suite timed out after 120 seconds.",
-        }
-
-    except Exception as exc:
-        return {
-            "status": "UNKNOWN",
-            "command": command,
-            "exit_code": -1,
-            "stdout": "",
-            "stderr": str(exc),
-        }
+    return {
+        "status": "PASS" if result["exit_code"] == 0 else "FAIL",
+        "command": result["command"],
+        "exit_code": result["exit_code"],
+        "stdout": result["stdout"][-10000:],
+        "stderr": result["stderr"][-10000:],
+    }
 
 
 def determine_verdict(
@@ -396,3 +371,5 @@ def verify(repo: Path) -> dict[str, Any]:
         "tests": tests,
         "verdict": verdict,
     }
+
+
