@@ -8,7 +8,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agentproof.core import detect_changes
+from agentproof.core import detect_changes, verify as run_verification
+
 
 app = typer.Typer(
     name="agentproof",
@@ -19,7 +20,7 @@ console = Console()
 
 
 def run_git(args: list[str]) -> tuple[int, str, str]:
-    """Run a Git command in the current directory."""
+    """Run a Git command in the current repository."""
 
     try:
         result = subprocess.run(
@@ -124,7 +125,9 @@ def repo():
         for file in changed_files:
             console.print(f"  {file}")
     else:
-        console.print("\n[green]Working tree is clean.[/green]")
+        console.print(
+            "\n[green]Working tree is clean.[/green]"
+        )
 
 
 @app.command()
@@ -277,6 +280,93 @@ def changes():
     console.print(
         f"\n[bold]Total changes detected:[/bold] {len(detected)}"
     )
+
+
+@app.command()
+def verify():
+    """Run the complete AgentProof verification pipeline."""
+
+    repo = Path.cwd()
+
+    try:
+        report = run_verification(repo)
+
+    except Exception as exc:
+        console.print(
+            Panel(
+                f"[bold red]{exc}[/bold red]",
+                title="Verification Error",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(code=1)
+
+    report_path = (
+        repo / ".agentproof" / "report.json"
+    )
+
+    report_path.parent.mkdir(exist_ok=True)
+
+    with report_path.open("w", encoding="utf-8") as file:
+        json.dump(report, file, indent=2)
+
+    table = Table(title="AgentProof Verification")
+
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Details")
+
+    changes = report["changes"]
+
+    table.add_row(
+        "Changes",
+        "PASS" if changes else "UNKNOWN",
+        f"{len(changes)} change(s) detected",
+    )
+
+    scope_status = report["scope_check"]["status"]
+
+    table.add_row(
+        "Scope",
+        scope_status,
+        report["scope_check"]["message"],
+    )
+
+    test_status = report["tests"]["status"]
+
+    table.add_row(
+        "Tests",
+        test_status,
+        f'exit code: {report["tests"]["exit_code"]}',
+    )
+
+    console.print(table)
+
+    verdict = report["verdict"]
+
+    style = {
+        "PASS": "green",
+        "FAIL": "red",
+        "UNKNOWN": "yellow",
+    }[verdict]
+
+    console.print(
+        Panel(
+            f"[bold]{verdict}[/bold]",
+            title="FINAL VERDICT",
+            border_style=style,
+        )
+    )
+
+    console.print(
+        f"\nEvidence report: [bold]{report_path}[/bold]"
+    )
+
+    if verdict == "FAIL":
+        raise typer.Exit(code=1)
+
+    if verdict == "UNKNOWN":
+        raise typer.Exit(code=2)
 
 
 if __name__ == "__main__":
