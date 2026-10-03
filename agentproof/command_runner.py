@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from agentproof.action_log import ActionLogger
+from agentproof.run_manager import RunManager
 
 
 class CommandRunner:
@@ -13,7 +14,14 @@ class CommandRunner:
 
     def __init__(self, repo: Path):
         self.repo = repo
-        self.logger = ActionLogger(repo)
+
+        run = RunManager(repo).current()
+        run_id = run["run_id"] if run else None
+
+        self.logger = ActionLogger(
+            repo,
+            run_id=run_id,
+        )
 
     def run(
         self,
