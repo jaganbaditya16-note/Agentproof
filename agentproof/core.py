@@ -5,6 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 def run_git(repo: Path, args: list[str]) -> tuple[int, str, str]:
     """Run a Git command and return exit code, stdout, stderr."""
@@ -41,6 +43,93 @@ def load_baseline(repo: Path) -> dict[str, Any]:
 
     with path.open("r", encoding="utf-8") as file:
         return json.load(file)
+
+
+def load_contract(repo: Path) -> dict[str, Any]:
+    """
+    Load and validate the AgentProof task contract.
+
+    The contract defines:
+    - task identity and goal
+    - allowed paths
+    - forbidden paths
+    - verification requirements
+    - verdict behavior
+    """
+
+    path = repo / "agentproof.yaml"
+
+    if not path.exists():
+        raise FileNotFoundError(
+            "agentproof.yaml was not found."
+        )
+
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            contract = yaml.safe_load(file)
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f"Invalid YAML in agentproof.yaml: {exc}"
+        ) from exc
+
+    if not isinstance(contract, dict):
+        raise ValueError(
+            "agentproof.yaml must contain a YAML mapping."
+        )
+
+    required_sections = [
+        "task",
+        "scope",
+        "verification",
+        "verdict",
+    ]
+
+    missing_sections = [
+        section
+        for section in required_sections
+        if section not in contract
+    ]
+
+    if missing_sections:
+        raise ValueError(
+            "Task contract is missing required section(s): "
+            + ", ".join(missing_sections)
+        )
+
+    task = contract["task"]
+
+    if not isinstance(task, dict):
+        raise ValueError("The 'task' section must be a mapping.")
+
+    if not task.get("id"):
+        raise ValueError("The task must have an 'id'.")
+
+    if not task.get("name"):
+        raise ValueError("The task must have a 'name'.")
+
+    if not task.get("goal"):
+        raise ValueError("The task must have a 'goal'.")
+
+    scope = contract["scope"]
+
+    if not isinstance(scope, dict):
+        raise ValueError("The 'scope' section must be a mapping.")
+
+    verification = contract["verification"]
+
+    if not isinstance(verification, dict):
+        raise ValueError(
+            "The 'verification' section must be a mapping."
+        )
+
+    if verification.get("require_tests_to_pass") is True:
+        if not verification.get("test_command"):
+            raise ValueError(
+                "test_command is required when "
+                "require_tests_to_pass is true."
+            )
+
+    return contract
 
 
 def detect_changes(repo: Path) -> list[dict[str, str]]:
@@ -105,7 +194,6 @@ def detect_changes(repo: Path) -> list[dict[str, str]]:
                 }
             )
 
-    # Git diff does not include untracked files.
     code, output, error = run_git(
         repo,
         [
@@ -135,31 +223,28 @@ def detect_changes(repo: Path) -> list[dict[str, str]]:
 
 def run_tests(repo: Path) -> dict[str, Any]:
     """
-    Run the project's independent test suite.
-
-    This is intentionally separate from change detection.
-    The agent's changed code is not trusted just because it changed.
+    Run the independent test suite defined by the task contract.
     """
 
-    command = [
-        ".venv",
-        "Scripts",
-        "python.exe",
-    ]
+    contract = load_contract(repo)
+    verification = contract["verification"]
 
-    python_path = repo.joinpath(*command)
+    command = verification.get("test_command")
 
-    if python_path.exists():
-        executable = str(python_path)
-        args = [executable, "-m", "pytest", "-q"]
-    else:
-        executable = "py"
-        args = [executable, "-m", "pytest", "-q"]
+    if not command:
+        return {
+            "status": "UNKNOWN",
+            "command": None,
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": "No test command configured.",
+        }
 
     try:
         result = subprocess.run(
-            args,
+            command,
             cwd=repo,
+            shell=True,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -169,37 +254,25 @@ def run_tests(repo: Path) -> dict[str, Any]:
 
         return {
             "status": "PASS" if result.returncode == 0 else "FAIL",
-            "command": " ".join(args),
+            "command": command,
             "exit_code": result.returncode,
             "stdout": result.stdout[-10000:],
             "stderr": result.stderr[-10000:],
         }
 
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode(errors="replace")
-
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode(errors="replace")
-
+    except subprocess.TimeoutExpired:
         return {
             "status": "UNKNOWN",
-            "command": " ".join(args),
+            "command": command,
             "exit_code": -1,
-            "stdout": stdout[-10000:],
-            "stderr": (
-                stderr[-10000:]
-                + "\nTest suite timed out after 120 seconds."
-            ),
+            "stdout": "",
+            "stderr": "Test suite timed out after 120 seconds.",
         }
 
-    except FileNotFoundError as exc:
+    except Exception as exc:
         return {
             "status": "UNKNOWN",
-            "command": " ".join(args),
+            "command": command,
             "exit_code": -1,
             "stdout": "",
             "stderr": str(exc),
@@ -214,8 +287,8 @@ def determine_verdict(
     Produce a conservative verification verdict.
 
     FAIL always wins.
-    UNKNOWN is returned when verification cannot establish success.
-    PASS requires the independent test suite to pass.
+    UNKNOWN is returned when success cannot be established.
+    PASS requires changes and passing independent tests.
     """
 
     if tests["status"] == "FAIL":
@@ -232,14 +305,10 @@ def determine_verdict(
 
 def verify(repo: Path) -> dict[str, Any]:
     """
-    Run the first AgentProof verification workflow.
-
-    1. Load baseline.
-    2. Detect changes.
-    3. Run independent tests.
-    4. Produce a conservative verdict.
+    Run the AgentProof verification workflow.
     """
 
+    contract = load_contract(repo)
     baseline = load_baseline(repo)
     changes = detect_changes(repo)
     tests = run_tests(repo)
@@ -251,6 +320,9 @@ def verify(repo: Path) -> dict[str, Any]:
 
     return {
         "agentproof_version": "0.1.0",
+        "task": contract["task"],
+        "scope": contract["scope"],
+        "verification": contract["verification"],
         "baseline": baseline,
         "changes": changes,
         "tests": tests,
