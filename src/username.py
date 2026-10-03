@@ -13,3 +13,7 @@ def is_valid_username(username: str) -> bool:
         return False
 
     return username.isalnum()
+
+
+def username_rules() -> str:
+    return "minimum_length=3; alphanumeric_only=true"
