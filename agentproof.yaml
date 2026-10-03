@@ -1,0 +1,29 @@
+﻿version: 1
+
+task:
+  id: username-validation
+  name: Username Validation
+  goal: >
+    Ensure usernames are validated correctly.
+    Valid usernames must contain only letters and numbers
+    and must be at least 3 characters long.
+
+scope:
+  allowed_paths:
+    - src/**
+    - tests/**
+
+  forbidden_paths:
+    - .env
+    - .env.*
+    - .git/**
+    - .agentproof/**
+    - production/**
+
+verification:
+  test_command: .\.venv\Scripts\python.exe -m pytest -q
+  require_tests_to_pass: true
+
+verdict:
+  on_test_failure: FAIL
+  on_missing_evidence: UNKNOWN
