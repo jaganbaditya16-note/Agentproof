@@ -75,6 +75,7 @@ def load_contract(repo: Path) -> dict[str, Any]:
         "task",
         "scope",
         "verification",
+        "evidence",
         "verdict",
     ]
 
@@ -113,6 +114,27 @@ def load_contract(repo: Path) -> dict[str, Any]:
             "The 'verification' section must be a mapping."
         )
 
+    evidence = contract["evidence"]
+
+    if not isinstance(evidence, dict):
+        raise ValueError("The 'evidence' section must be a mapping.")
+
+    for field in ("type", "module", "function", "cases"):
+        if field not in evidence:
+            raise ValueError(
+                f"The evidence must have a '{field}'."
+            )
+
+    if not isinstance(evidence["cases"], list) or not evidence["cases"]:
+        raise ValueError(
+            "The evidence 'cases' must be a non-empty list."
+        )
+
+    if evidence["type"] != "python_function":
+        raise ValueError(
+            "Unsupported evidence type: "
+            f"{evidence['type']}"
+        )
     if verification.get("require_tests_to_pass") is True:
         if not verification.get("test_command"):
             raise ValueError(
@@ -315,17 +337,103 @@ def run_tests(repo: Path) -> dict[str, Any]:
     }
 
 
+def evaluate_evidence(repo: Path) -> dict[str, Any]:
+    """Independently evaluate the evidence cases defined by the task contract."""
+
+    contract = load_contract(repo)
+    evidence = contract["evidence"]
+
+    module_name = evidence["module"]
+    function_name = evidence["function"]
+    cases = evidence["cases"]
+
+    try:
+        import importlib
+
+        module = importlib.import_module(module_name)
+    except Exception as exc:
+        return {
+            "status": "UNKNOWN",
+            "type": evidence["type"],
+            "module": module_name,
+            "function": function_name,
+            "cases": [],
+            "passed": 0,
+            "failed": 0,
+            "error": str(exc),
+        }
+
+    function = getattr(module, function_name, None)
+
+    if not callable(function):
+        return {
+            "status": "FAIL",
+            "type": evidence["type"],
+            "module": module_name,
+            "function": function_name,
+            "cases": [],
+            "passed": 0,
+            "failed": 0,
+            "error": f"Function '{function_name}' was not found.",
+        }
+
+    results = []
+    passed = 0
+    failed = 0
+
+    for index, case in enumerate(cases, start=1):
+        expected = case.get("expected")
+
+        try:
+            actual = function(case.get("input"))
+            case_passed = actual == expected
+            error = None
+        except Exception as exc:
+            actual = None
+            case_passed = False
+            error = str(exc)
+
+        results.append(
+            {
+                "case": index,
+                "input": case.get("input"),
+                "expected": expected,
+                "actual": actual,
+                "status": "PASS" if case_passed else "FAIL",
+                "error": error,
+            }
+        )
+
+        if case_passed:
+            passed += 1
+        else:
+            failed += 1
+
+    status = "PASS" if failed == 0 else "FAIL"
+
+    return {
+        "status": status,
+        "type": evidence["type"],
+        "module": module_name,
+        "function": function_name,
+        "cases": results,
+        "passed": passed,
+        "failed": failed,
+        "error": None,
+    }
+
 def determine_verdict(
     changes: list[dict[str, str]],
     scope: dict[str, Any],
     tests: dict[str, Any],
+    evidence: dict[str, Any],
 ) -> str:
     """
     Produce a conservative verification verdict.
 
     FAIL always wins.
     UNKNOWN is returned when success cannot be established.
-    PASS requires changes, valid scope, and passing tests.
+    PASS requires changes, valid scope, passing tests, and passing evidence.
     """
 
     if scope["status"] == "FAIL":
@@ -334,13 +442,22 @@ def determine_verdict(
     if tests["status"] == "FAIL":
         return "FAIL"
 
+    if evidence["status"] == "FAIL":
+        return "FAIL"
+
     if scope["status"] == "UNKNOWN":
         return "UNKNOWN"
 
     if tests["status"] == "UNKNOWN":
         return "UNKNOWN"
 
+    if evidence["status"] == "UNKNOWN":
+        return "UNKNOWN"
+
     if not changes:
+        return "UNKNOWN"
+
+    if evidence["status"] != "PASS":
         return "UNKNOWN"
 
     return "PASS"
@@ -354,11 +471,13 @@ def verify(repo: Path) -> dict[str, Any]:
     changes = detect_changes(repo)
     scope = check_scope(changes, contract)
     tests = run_tests(repo)
+    evidence = evaluate_evidence(repo)
 
     verdict = determine_verdict(
         changes=changes,
         scope=scope,
         tests=tests,
+        evidence=evidence,
     )
 
     return {
@@ -369,7 +488,6 @@ def verify(repo: Path) -> dict[str, Any]:
         "changes": changes,
         "scope_check": scope,
         "tests": tests,
+        "evidence": evidence,
         "verdict": verdict,
     }
-
-
