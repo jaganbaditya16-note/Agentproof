@@ -349,7 +349,7 @@ def run_tests(repo: Path) -> dict[str, Any]:
 
 
 def evaluate_evidence(repo: Path) -> dict[str, Any]:
-    """Independently evaluate the evidence cases defined by the task contract."""
+    """Evaluate evidence in a separate worker process."""
 
     contract = load_contract(repo)
     evidence = contract["evidence"]
@@ -358,24 +358,44 @@ def evaluate_evidence(repo: Path) -> dict[str, Any]:
     function_name = evidence["function"]
     cases = evidence["cases"]
 
+    payload = json.dumps(
+        {
+            "repo": str(repo),
+            "module": module_name,
+            "function": function_name,
+            "cases": cases,
+        },
+        ensure_ascii=False,
+    )
+
     try:
-        import types
+        import sys
 
-        module_path = repo / (module_name.replace(".", "/") + ".py")
-
-        if not module_path.is_file():
-            raise FileNotFoundError(
-                f"Evidence module file was not found: {module_path}"
-            )
-
-        module = types.ModuleType(
-            f"_agentproof_evidence_{module_name.replace('.', '_')}"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "agentproof.evidence_worker",
+            ],
+            cwd=repo,
+            input=payload,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
         )
-        module.__file__ = str(module_path)
-
-        source = module_path.read_text(encoding="utf-8-sig")
-        code = compile(source, str(module_path), "exec")
-        exec(code, module.__dict__)
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "UNKNOWN",
+            "type": evidence["type"],
+            "module": module_name,
+            "function": function_name,
+            "cases": [],
+            "passed": 0,
+            "failed": 0,
+            "error": "Evidence worker timed out after 120 seconds.",
+        }
     except Exception as exc:
         return {
             "status": "UNKNOWN",
@@ -388,64 +408,39 @@ def evaluate_evidence(repo: Path) -> dict[str, Any]:
             "error": str(exc),
         }
 
-    function = getattr(module, function_name, None)
-
-    if not callable(function):
+    if not result.stdout.strip():
         return {
-            "status": "FAIL",
+            "status": "UNKNOWN",
             "type": evidence["type"],
             "module": module_name,
             "function": function_name,
             "cases": [],
             "passed": 0,
             "failed": 0,
-            "error": f"Function '{function_name}' was not found.",
+            "error": (
+                "Evidence worker produced no result."
+                if not result.stderr.strip()
+                else result.stderr.strip()
+            ),
         }
 
-    results = []
-    passed = 0
-    failed = 0
+    try:
+        worker_result = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return {
+            "status": "UNKNOWN",
+            "type": evidence["type"],
+            "module": module_name,
+            "function": function_name,
+            "cases": [],
+            "passed": 0,
+            "failed": 0,
+            "error": f"Invalid evidence worker output: {exc}",
+        }
 
-    for index, case in enumerate(cases, start=1):
-        expected = case.get("expected")
+    worker_result["type"] = evidence["type"]
+    return worker_result
 
-        try:
-            actual = function(case.get("input"))
-            case_passed = actual == expected
-            error = None
-        except Exception as exc:
-            actual = None
-            case_passed = False
-            error = str(exc)
-
-        results.append(
-            {
-                "case": index,
-                "input": case.get("input"),
-                "expected": expected,
-                "actual": actual,
-                "status": "PASS" if case_passed else "FAIL",
-                "error": error,
-            }
-        )
-
-        if case_passed:
-            passed += 1
-        else:
-            failed += 1
-
-    status = "PASS" if failed == 0 else "FAIL"
-
-    return {
-        "status": status,
-        "type": evidence["type"],
-        "module": module_name,
-        "function": function_name,
-        "cases": results,
-        "passed": passed,
-        "failed": failed,
-        "error": None,
-    }
 
 def determine_verdict(
     changes: list[dict[str, str]],
@@ -516,4 +511,5 @@ def verify(repo: Path) -> dict[str, Any]:
         "evidence": evidence,
         "verdict": verdict,
     }
+
 
