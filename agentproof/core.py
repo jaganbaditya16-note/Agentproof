@@ -130,6 +130,17 @@ def load_contract(repo: Path) -> dict[str, Any]:
             "The evidence 'cases' must be a non-empty list."
         )
 
+    for index, case in enumerate(evidence["cases"], start=1):
+        if not isinstance(case, dict):
+            raise ValueError(
+                f"Evidence case {index} must be a mapping."
+            )
+
+        for field in ("input", "expected"):
+            if field not in case:
+                raise ValueError(
+                    f"Evidence case {index} must have a '{field}'."
+                )
     if evidence["type"] != "python_function":
         raise ValueError(
             "Unsupported evidence type: "
@@ -495,5 +506,6 @@ def verify(repo: Path) -> dict[str, Any]:
         "evidence": evidence,
         "verdict": verdict,
     }
+
 
 
