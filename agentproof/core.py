@@ -359,13 +359,23 @@ def evaluate_evidence(repo: Path) -> dict[str, Any]:
     cases = evidence["cases"]
 
     try:
-        import importlib
-        import sys
+        import types
 
-        if str(repo) not in sys.path:
-            sys.path.insert(0, str(repo))
+        module_path = repo / (module_name.replace(".", "/") + ".py")
 
-        module = importlib.import_module(module_name)
+        if not module_path.is_file():
+            raise FileNotFoundError(
+                f"Evidence module file was not found: {module_path}"
+            )
+
+        module = types.ModuleType(
+            f"_agentproof_evidence_{module_name.replace('.', '_')}"
+        )
+        module.__file__ = str(module_path)
+
+        source = module_path.read_text(encoding="utf-8-sig")
+        code = compile(source, str(module_path), "exec")
+        exec(code, module.__dict__)
     except Exception as exc:
         return {
             "status": "UNKNOWN",
@@ -506,6 +516,4 @@ def verify(repo: Path) -> dict[str, Any]:
         "evidence": evidence,
         "verdict": verdict,
     }
-
-
 
