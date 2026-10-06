@@ -8,7 +8,9 @@ from typing import Any
 
 import yaml
 
+from agentproof.action_log import ActionLogger
 from agentproof.command_runner import CommandRunner
+from agentproof.run_manager import RunManager
 
 
 def run_git(repo: Path, args: list[str]) -> tuple[int, str, str]:
@@ -348,7 +350,7 @@ def run_tests(repo: Path) -> dict[str, Any]:
     }
 
 
-def evaluate_evidence(repo: Path) -> dict[str, Any]:
+def evaluate_evidence(repo: Path, *, log_actions: bool = False) -> dict[str, Any]:
     """Evaluate evidence in a separate worker process."""
 
     contract = load_contract(repo)
@@ -358,6 +360,21 @@ def evaluate_evidence(repo: Path) -> dict[str, Any]:
     function_name = evidence["function"]
     cases = evidence["cases"]
 
+    logger = None
+
+    if log_actions:
+        run = RunManager(repo).current()
+        run_id = run["run_id"] if run else None
+        logger = ActionLogger(repo, run_id=run_id)
+
+        logger.record(
+            "EVIDENCE_WORKER_STARTED",
+            {
+                "module": module_name,
+                "function": function_name,
+                "case_count": len(cases),
+            },
+        )
     payload = json.dumps(
         {
             "repo": str(repo),
@@ -439,6 +456,20 @@ def evaluate_evidence(repo: Path) -> dict[str, Any]:
         }
 
     worker_result["type"] = evidence["type"]
+
+    if logger is not None:
+        logger.record(
+            "EVIDENCE_WORKER_FINISHED",
+            {
+                "module": module_name,
+                "function": function_name,
+                "status": worker_result.get("status"),
+                "passed": worker_result.get("passed", 0),
+                "failed": worker_result.get("failed", 0),
+                "exit_code": result.returncode,
+            },
+        )
+
     return worker_result
 
 
@@ -491,7 +522,7 @@ def verify(repo: Path) -> dict[str, Any]:
     changes = detect_changes(repo)
     scope = check_scope(changes, contract)
     tests = run_tests(repo)
-    evidence = evaluate_evidence(repo)
+    evidence = evaluate_evidence(repo, log_actions=True)
 
     verdict = determine_verdict(
         changes=changes,
@@ -511,5 +542,11 @@ def verify(repo: Path) -> dict[str, Any]:
         "evidence": evidence,
         "verdict": verdict,
     }
+
+
+
+
+
+
 
 
