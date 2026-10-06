@@ -354,6 +354,13 @@ def verify():
         test_status,
         f'exit code: {report["tests"]["exit_code"]}',
     )
+    evidence_status = report["evidence"]["status"]
+
+    table.add_row(
+        "Evidence",
+        evidence_status,
+        f'{report["evidence"]["passed"]} passed, {report["evidence"]["failed"]} failed',
+    )
 
     console.print(table)
 
@@ -386,3 +393,4 @@ def verify():
 
 if __name__ == "__main__":
     app()
+
