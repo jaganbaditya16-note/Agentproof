@@ -375,6 +375,28 @@ def evaluate_evidence(repo: Path, *, log_actions: bool = False) -> dict[str, Any
                 "case_count": len(cases),
             },
         )
+
+    def finish_worker_log(
+        status: str,
+        passed: int = 0,
+        failed: int = 0,
+        exit_code: int | None = None,
+    ) -> None:
+        """Record the evidence worker completion event."""
+
+        if logger is not None:
+            logger.record(
+                "EVIDENCE_WORKER_FINISHED",
+                {
+                    "module": module_name,
+                    "function": function_name,
+                    "status": status,
+                    "passed": passed,
+                    "failed": failed,
+                    "exit_code": exit_code,
+                },
+            )
+
     payload = json.dumps(
         {
             "repo": str(repo),
@@ -402,7 +424,10 @@ def evaluate_evidence(repo: Path, *, log_actions: bool = False) -> dict[str, Any
             errors="replace",
             timeout=120,
         )
+
     except subprocess.TimeoutExpired:
+        finish_worker_log("UNKNOWN")
+
         return {
             "status": "UNKNOWN",
             "type": evidence["type"],
@@ -413,7 +438,10 @@ def evaluate_evidence(repo: Path, *, log_actions: bool = False) -> dict[str, Any
             "failed": 0,
             "error": "Evidence worker timed out after 120 seconds.",
         }
+
     except Exception as exc:
+        finish_worker_log("UNKNOWN")
+
         return {
             "status": "UNKNOWN",
             "type": evidence["type"],
@@ -426,6 +454,11 @@ def evaluate_evidence(repo: Path, *, log_actions: bool = False) -> dict[str, Any
         }
 
     if not result.stdout.strip():
+        finish_worker_log(
+            "UNKNOWN",
+            exit_code=result.returncode,
+        )
+
         return {
             "status": "UNKNOWN",
             "type": evidence["type"],
@@ -443,7 +476,13 @@ def evaluate_evidence(repo: Path, *, log_actions: bool = False) -> dict[str, Any
 
     try:
         worker_result = json.loads(result.stdout)
+
     except json.JSONDecodeError as exc:
+        finish_worker_log(
+            "UNKNOWN",
+            exit_code=result.returncode,
+        )
+
         return {
             "status": "UNKNOWN",
             "type": evidence["type"],
@@ -457,22 +496,14 @@ def evaluate_evidence(repo: Path, *, log_actions: bool = False) -> dict[str, Any
 
     worker_result["type"] = evidence["type"]
 
-    if logger is not None:
-        logger.record(
-            "EVIDENCE_WORKER_FINISHED",
-            {
-                "module": module_name,
-                "function": function_name,
-                "status": worker_result.get("status"),
-                "passed": worker_result.get("passed", 0),
-                "failed": worker_result.get("failed", 0),
-                "exit_code": result.returncode,
-            },
-        )
+    finish_worker_log(
+        worker_result.get("status", "UNKNOWN"),
+        worker_result.get("passed", 0),
+        worker_result.get("failed", 0),
+        result.returncode,
+    )
 
     return worker_result
-
-
 def determine_verdict(
     changes: list[dict[str, str]],
     scope: dict[str, Any],
