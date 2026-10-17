@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import fnmatch
 import json
@@ -11,6 +11,7 @@ import yaml
 from agentproof.action_log import ActionLogger
 from agentproof.command_runner import CommandRunner
 from agentproof.run_manager import RunManager
+from agentproof.security_scan import scan_changed_files
 
 
 def run_git(repo: Path, args: list[str]) -> tuple[int, str, str]:
@@ -149,9 +150,20 @@ def load_contract(repo: Path) -> dict[str, Any]:
             f"{evidence['type']}"
         )
     if verification.get("require_tests_to_pass") is True:
-        if not verification.get("test_command"):
+        test_command = verification.get("test_command")
+
+        if (
+            not isinstance(test_command, list)
+            or not test_command
+            or any(
+                not isinstance(arg, str) or not arg.strip()
+                for arg in test_command
+            )
+            or not test_command[0].strip()
+        ):
             raise ValueError(
-                "test_command is required when "
+                "test_command must be a non-empty list of "
+                "non-empty string arguments when "
                 "require_tests_to_pass is true."
             )
 
@@ -509,6 +521,7 @@ def determine_verdict(
     scope: dict[str, Any],
     tests: dict[str, Any],
     evidence: dict[str, Any],
+    security: dict[str, Any] | None = None,
 ) -> str:
     """
     Produce a conservative verification verdict.
@@ -518,6 +531,9 @@ def determine_verdict(
     PASS requires changes, valid scope, passing tests, and passing evidence.
     """
 
+    if security is not None and security.get("status") == "FAIL":
+        return "FAIL"
+
     if scope["status"] == "FAIL":
         return "FAIL"
 
@@ -526,6 +542,9 @@ def determine_verdict(
 
     if evidence["status"] == "FAIL":
         return "FAIL"
+
+    if security is not None and security.get("status") == "UNKNOWN":
+        return "UNKNOWN"
 
     if scope["status"] == "UNKNOWN":
         return "UNKNOWN"
@@ -554,12 +573,14 @@ def verify(repo: Path) -> dict[str, Any]:
     scope = check_scope(changes, contract)
     tests = run_tests(repo)
     evidence = evaluate_evidence(repo, log_actions=True)
+    security = scan_changed_files(repo, changes)
 
     verdict = determine_verdict(
         changes=changes,
         scope=scope,
         tests=tests,
         evidence=evidence,
+        security=security,
     )
 
     return {
@@ -571,6 +592,7 @@ def verify(repo: Path) -> dict[str, Any]:
         "scope_check": scope,
         "tests": tests,
         "evidence": evidence,
+        "security_scan": security,
         "verdict": verdict,
     }
 
