@@ -13,6 +13,9 @@ dependencies = [
     "PyYAML>=6.0"
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 agentproof = "agentproof.cli:app"
 

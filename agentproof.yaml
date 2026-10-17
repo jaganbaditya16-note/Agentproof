@@ -1,17 +1,18 @@
-﻿version: 1
+version: 1
 
 task:
-  id: username-validation
-  name: Username Validation
+  id: agentproof-local-verification
+  name: AgentProof local verification and secret scanning
   goal: >
-    Ensure usernames are validated correctly.
-    Valid usernames must contain only letters and numbers
-    and must be at least 3 characters long.
+    Verify changed project files, run automated tests, and detect
+    likely exposed credentials using local deterministic checks.
 
 scope:
   allowed_paths:
-    - src/**
+    - agentproof/**
     - tests/**
+    - agentproof.yaml
+    - README.md
 
   forbidden_paths:
     - .env
@@ -21,30 +22,23 @@ scope:
     - production/**
 
 verification:
-  test_command: .\.venv\Scripts\python.exe -m pytest -q
+  test_command:
+    - '.\.venv\Scripts\python.exe'
+    - -m
+    - pytest
+    - -q
   require_tests_to_pass: true
 
 verdict:
   on_test_failure: FAIL
   on_missing_evidence: UNKNOWN
+
 evidence:
   type: python_function
-  module: src.username
-  function: is_valid_username
+  module: agentproof.security_scan
+  function: scan_text
   cases:
-    - input: "Jagan123"
-      expected: true
-    - input: "ab"
-      expected: false
-    - input: "Jagan 123"
-      expected: false
-    - input: "Jagan@123"
-      expected: false
     - input: ""
-      expected: false
-    - input: null
-      expected: false
-    - input: "abc123"
-      expected: true
-    - input: "123"
-      expected: true
+      expected: []
+    - input: "ordinary code without credentials"
+      expected: []

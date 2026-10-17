@@ -1,4 +1,4 @@
-﻿import json
+import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +10,7 @@ from rich.table import Table
 
 from agentproof.core import detect_changes, verify as run_verification
 from agentproof.run_manager import RunManager
+from agentproof.security_scan import scan_changed_files
 
 
 app = typer.Typer(
@@ -362,6 +363,16 @@ def verify():
         f'{report["evidence"]["passed"]} passed, {report["evidence"]["failed"]} failed',
     )
 
+    security = report.get("security_scan", {})
+    security_status = security.get("status", "UNKNOWN")
+
+    table.add_row(
+        "Security scan",
+        security_status,
+        f'{len(security.get("findings", []))} finding(s), '
+        f'{len(security.get("files_scanned", []))} file(s) scanned',
+    )
+
     console.print(table)
 
     verdict = report["verdict"]
@@ -390,6 +401,56 @@ def verify():
     if verdict == "UNKNOWN":
         raise typer.Exit(code=2)
 
+
+
+@app.command("security-scan")
+def security_scan():
+    """Scan changed files for likely exposed credentials."""
+    repo = Path.cwd()
+
+    try:
+        changes = detect_changes(repo)
+        result = scan_changed_files(repo, changes)
+    except Exception as exc:
+        console.print(
+            Panel(
+                f"[bold red]Security scan could not run:[/bold red]\n\n{exc}",
+                title="AgentProof Security Scan",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(code=2)
+
+    table = Table(title="Changed-file Secret Scan")
+    table.add_column("Property")
+    table.add_column("Value")
+    table.add_row("Status", result["status"])
+    table.add_row("Files scanned", str(len(result["files_scanned"])))
+    table.add_row("Findings", str(len(result["findings"])))
+    table.add_row("Skipped", str(len(result["skipped"])))
+    table.add_row("Scan errors", str(len(result["errors"])))
+    console.print(table)
+
+    for item in result["findings"]:
+        console.print(
+            f"[red]{item['severity'].upper()}[/red] "
+            f"{item['path']}:{item['line']} ? {item['rule_id']}"
+        )
+
+    for item in result["errors"]:
+        console.print(
+            f"[yellow]UNKNOWN[/yellow] {item['path']} ? {item['reason']}"
+        )
+
+    for item in result["skipped"]:
+        console.print(
+            f"[dim]Skipped[/dim] {item['path']} ? {item['reason']}"
+        )
+
+    if result["status"] == "FAIL":
+        raise typer.Exit(code=1)
+    if result["status"] == "UNKNOWN":
+        raise typer.Exit(code=2)
 
 if __name__ == "__main__":
     app()
